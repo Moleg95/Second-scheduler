@@ -1,0 +1,104 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: second-scheduler
+  namespace: kube-system
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: my-scheduler-as-kube-scheduler
+subjects:
+- kind: ServiceAccount
+  name: second-scheduler
+  namespace: kube-system
+roleRef:
+  kind: ClusterRole
+  name: system:kube-scheduler
+  apiGroup: rbac.authorization.k8s.io
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: my-scheduler-as-volume-scheduler
+subjects:
+- kind: ServiceAccount
+  name: second-scheduler
+  namespace: kube-system
+roleRef:
+  kind: ClusterRole
+  name: system:volume-scheduler
+  apiGroup: rbac.authorization.k8s.io
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: second-scheduler-config
+  namespace: kube-system
+data: 
+  second-scheduler-config.yaml: |
+    apiVersion: kubescheduler.config.k8s.io/v1beta2
+    kind: KubeSchedulerConfiguration
+    profiles:
+      - schedulerName: second-scheduler
+    leaderElection:
+      leaderElect: false
+    
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  labels:
+    component: scheduler
+    tier: control-plane
+  name: second-scheduler
+  namespace: kube-system
+spec:
+  serviceAccountName: second-scheduler
+  tolerations:
+  - key: "node-role.kubernetes.io/master"
+    operator: "Exists"
+    effect: "NoSchedule"
+  nodeSelector:
+    kubernetes.io/hostname: centos1.homenet.local
+  containers:
+  - command:
+    - /usr/local/bin/kube-scheduler
+    - --bind-address=0.0.0.0
+    - --leader-elect=false
+    - --config=/etc/kubernetes/second-scheduler/second-scheduler-config.yaml
+    - --port=0
+    image: k8s.gcr.io/kube-scheduler:v1.23.0
+    livenessProbe:
+      httpGet:
+        path: /healthz
+        port: 10259
+        scheme: HTTPS
+      initialDelaySeconds: 15
+    name: kube-second-scheduler
+    readinessProbe:
+      httpGet:
+        path: /healthz
+        port: 10259
+        scheme: HTTPS
+    resources:
+      requests:
+        cpu: '0.1'
+    securityContext:
+      privileged: false
+    volumeMounts:
+      - name: config-volume
+        mountPath: /etc/kubernetes/second-scheduler
+  hostNetwork: false
+  hostPID: false
+#  nodeSelector:
+#    comp: red
+  volumes:
+    - name: config-volume
+      configMap:
+         # Provide the name of the ConfigMap containing the files you want
+         # to add to the container
+        name: second-scheduler-config
